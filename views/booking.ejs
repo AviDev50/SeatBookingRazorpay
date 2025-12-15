@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Booking Created</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .booking-card {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    #payBtn {
+      background: #3399cc;
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      font-size: 16px;
+      border-radius: 5px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 20px;
+    }
+    #payBtn:hover {
+      background: #2980b9;
+    }
+    #payBtn:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="booking-card">
+    <h2>Booking Created (PENDING)</h2>
+    <p><strong>Booking ID:</strong> <%= bookingId %></p>
+    <p><strong>Amount:</strong> ₹<%= amount %></p>
+    <p><strong>Seats:</strong> <%= seats.map(s => s.seat_number).join(', ') %></p>
+    
+    <button id="payBtn">Pay Now with Razorpay</button>
+  </div>
+
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
+  <script>
+    const bookingData = {
+      bookingId: "<%= bookingId %>",
+      userId: "<%= user_id %>",
+      showId: "<%= show_id %>",
+      seats: <%- JSON.stringify(seats) %>,
+      amount: <%= amount %>,
+      razorpayKey: "<%= razorpayKey %>",
+      orderId: "<%= orderId %>"  // here we use existing order id
+    };
+
+    document.getElementById("payBtn").onclick = async function () {
+      const btn = this;
+      btn.disabled = true;
+      btn.textContent = "Processing...";
+
+      try {
+        // here we also use existing order_id 
+        const options = {
+          key: bookingData.razorpayKey,
+          amount: bookingData.amount * 100,
+          currency: "INR",
+          order_id: bookingData.orderId,  // here also existing
+          name: "Movie Ticket Booking",
+          description: "Seats: " + bookingData.seats.map(s => s.seat_number).join(", "),
+          handler: async function (response) {
+            try {
+              const verifyRes = await fetch("/payment/success", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_signature: response.razorpay_signature,
+                  booking_id: bookingData.bookingId
+                })
+              });
+              
+              const result = await verifyRes.json();
+              
+              if (result.success) {
+                alert("Payment Successful! Booking confirmed.");
+                window.location.href = "/bookings";
+              } else {
+                alert("Payment verification failed");
+                btn.disabled = false;
+                btn.textContent = "Pay Now with Razorpay";
+              }
+            } catch (err) {
+              console.error('Payment verification error:', err);
+              alert("Payment received but verification failed");
+              btn.disabled = false;
+              btn.textContent = "Pay Now with Razorpay";
+            }
+          },
+          modal: {
+            ondismiss: async function() {
+              // here user closed the payment modal
+              try {
+                await fetch("/payment/fail", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ booking_id: bookingData.bookingId })
+                });
+                alert("Payment cancelled. Seats will be released.");
+              } catch (err) {
+                console.error('Error handling dismiss:', err);
+              }
+              btn.disabled = false;
+              btn.textContent = "Pay Now with Razorpay";
+            }
+          },
+          prefill: {
+            name: "Test User",
+            email: "test@example.com",
+            contact: "9999999999"
+          },
+          theme: {
+            color: "#3399cc"
+          }
+        };
+
+        const rzp = new Razorpay(options);
+        
+        rzp.on('payment.failed', async function (response) {
+          console.error('Payment failed:', response.error);
+          
+          try {
+            await fetch("/payment/fail", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ booking_id: bookingData.bookingId })
+            });
+          } catch (err) {
+            console.error('Error handling payment failure:', err);
+          }
+          
+          alert('Payment Failed: ' + response.error.description);
+          btn.disabled = false;
+          btn.textContent = "Pay Now with Razorpay";
+        });
+        
+        rzp.open();
+
+      } catch (error) {
+        console.error('Error:', error);
+        alert('Error: ' + error.message);
+        btn.disabled = false;
+        btn.textContent = "Pay Now with Razorpay";
+      }
+    };
+  </script>
+
+</body>
+</html>
